@@ -1,0 +1,69 @@
+name: Unit Testing and Deployment
+
+on:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * *"
+  push:
+    tags:
+      - "*"
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ALLOW_PLOTTING: true
+  SHELLOPTS: 'errexit:pipefail'
+
+jobs:
+  Linux:
+    name: Linux Unit Testing
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+
+      # see discussion at https://github.com/pyvista/pyvista/issues/2867
+      matrix:
+        include:
+          - python-version: '3.10'
+            vtk-version: 'latest'
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: Python-${{ runner.os }}-${{ matrix.python-version }}-${{ matrix.vtk-version }}-${{ hashFiles('setup.py') }}-${{ hashFiles('requirements_test.txt') }}
+          restore-keys: |
+            Python-${{ runner.os }}-${{ matrix.python-version }}
+
+      - name: Set up vtk
+        if: ${{ matrix.vtk-version != 'latest' }}
+        run: pip install vtk==${{ matrix.vtk-version }}
+
+      - uses: awalsh128/cache-apt-pkgs-action@v1.0.3
+        with:
+          packages: libgl1-mesa-glx xvfb python-tk
+          version: 1.0
+
+      - name: Install gmsh
+        run: |
+          sudo apt-get install -y python3-gmsh
+
+      - name: Install Testing Requirements
+        run: pip install -r requirements_test.txt
+
+      - name: Unit Testing
+        run: |
+          export PYTHONPATH=. && xvfb-run pytest

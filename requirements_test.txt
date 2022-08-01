@@ -1,0 +1,4 @@
+pyvista==0.35.2
+gmsh==4.10.5
+pytest==7.1.2
+meshio==5.3.4

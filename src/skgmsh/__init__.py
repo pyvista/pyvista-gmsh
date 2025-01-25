@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-import datetime
+import datetime  # noqa: F401
+import io
+import os
+import subprocess
+import tempfile
 from typing import TYPE_CHECKING
 
 import gmsh
@@ -24,8 +28,6 @@ SIMPLE = 0
 
 TRUE = 1
 FALSE = 0
-
-now = datetime.datetime.now(tz=datetime.timezone.utc)
 
 # major, minor, patch
 version_info = 0, 3, "dev0"
@@ -411,3 +413,107 @@ class Delaunay3D:
     def cell_size(self: Delaunay3D, size: int) -> None:
         """Set the cell_size of the mesh."""
         self._cell_size = size
+
+
+class Geometry2D:  # noqa: D101
+    def __init__(self):  # noqa: ANN204, D107
+        # List to store geometry elements
+        self.elements = []
+        self.virtual_file = io.StringIO()  # Using StringIO as a virtual file
+
+    def add_point(self, x, y, z=0.0, lc=1.0):  # noqa: ANN001, ANN201
+        """Add a point to the geometry"""  # noqa: D400, D415
+        self.elements.append(f"Point({len(self.elements) + 1}) = {{{x}, {y}, {z}, {lc}}};")
+
+    def add_line(self, point1_id, point2_id):  # noqa: ANN001, ANN201
+        """Add a line connecting two points"""  # noqa: D400, D415
+        self.elements.append(f"Line({len(self.elements) + 1}) = {{{point1_id}, {point2_id}}};")
+
+    def add_circle(self, point1_id, point2_id, point3_id):  # noqa: ANN001, ANN201
+        """Add a circular arc through three points"""  # noqa: D400, D415
+        self.elements.append(f"Circle({len(self.elements) + 1}) = {{{point1_id}, {point2_id}, {point3_id}}};")
+
+    def add_surface(self, line_ids):  # noqa: ANN001, ANN201
+        """Add a surface using a set of lines"""  # noqa: D400, D415
+        line_str = ", ".join(map(str, line_ids))
+        self.elements.append(f"Line Loop({len(self.elements) + 1}) = {{{line_str}}};")
+        self.elements.append(f"Plane Surface({len(self.elements) + 1}) = {{{len(self.elements)}}};")
+
+    def add_physical_group(self, dimension, entity_ids, name=None):  # noqa: ANN001, ANN201
+        """Add a physical group for meshing purposes"""  # noqa: D400, D415
+        entity_str = ", ".join(map(str, entity_ids))
+        if name:
+            self.elements.append(f"Physical Group({dimension}) = {{{entity_str}}};")
+        else:
+            self.elements.append(f"Physical Group({dimension}) = {{{entity_str}}};")
+
+    def to_virtual_file(self):  # noqa: ANN201
+        """Save geometry to a virtual file"""  # noqa: D400, D415
+        self.virtual_file = io.StringIO()  # Create a new virtual file
+        self.virtual_file.write("// Gmsh Geometry File\n")
+        for element in self.elements:
+            self.virtual_file.write(f"{element}\n")
+        self.virtual_file.seek(0)  # Reset the file pointer to the beginning
+
+    def from_virtual_file(self, virtual_file):  # noqa: ANN001, ANN201
+        """Load geometry from a virtual file"""  # noqa: D400, D415
+        self.elements.clear()
+        virtual_file.seek(0)  # Move pointer to the start of the file
+        for line in virtual_file:
+            line = line.strip()  # noqa: PLW2901
+            if line and not line.startswith("//"):
+                self.elements.append(line)
+
+    def get_virtual_file_content(self):  # noqa: ANN201
+        """Get the content of the virtual file"""  # noqa: D400, D415
+        self.virtual_file.seek(0)  # Move the pointer to the start
+        return self.virtual_file.read()
+
+    def execute_gmsh(self, gmsh_path="gmsh", output_file="mesh.msh", dimension=3):  # noqa: ANN001, ANN201
+        """
+        Execute Gmsh to generate a mesh from the virtual geometry file.
+        gmsh_path: Path to the Gmsh executable
+        output_file: Name of the output mesh file
+        dimension: The dimension of the mesh to generate (2D or 3D)
+        """  # noqa: D205, D400, D415
+        # Save the virtual file content to a temporary .geo file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".geo") as temp_geo:
+            temp_geo.write(self.get_virtual_file_content().encode("utf-8"))
+            temp_geo.flush()
+            temp_geo_name = temp_geo.name  # Get the temporary file name
+
+        # Construct the Gmsh command
+        command = [gmsh_path, temp_geo_name, "-o", output_file, f"-{dimension}", "-format", "msh"]
+
+        # Execute the Gmsh command
+        try:
+            result = subprocess.run(command, check=True, capture_output=True, text=True)  # noqa: S603
+            print("Gmsh execution successful.")  # noqa: T201
+            print(result.stdout)  # noqa: T201
+        except subprocess.CalledProcessError as e:
+            print(f"Error executing Gmsh: {e.stderr}")  # noqa: T201
+        finally:
+            # Clean up the temporary file
+            os.remove(temp_geo_name)  # noqa: PTH107
+
+    def __str__(self) -> str:
+        """Return the geometry as a string in Gmsh format."""
+        return "\n".join(self.elements)
+
+
+# Example usage
+# Create geometry, save to virtual file, and execute Gmsh
+manager = Geometry2D()
+manager.add_point(0, 0, 0, 1.0)  # Point 1: Origin
+manager.add_point(1, 0, 0, 1.0)  # Point 2: X-axis
+manager.add_point(1, 1, 0, 1.0)  # Point 3: Perpendicular point
+manager.add_line(1, 2)  # Line 1: Connect points 1 and 2
+manager.add_line(2, 3)  # Line 2: Connect points 2 and 3
+manager.add_line(3, 1)  # Line 3: Connect points 3 and 1
+manager.add_surface([1, 2, 3])  # Surface: Enclose lines 1, 2, and 3
+
+# Save geometry to virtual file
+manager.to_virtual_file()
+
+# Execute Gmsh to generate the mesh from the virtual file
+manager.execute_gmsh(gmsh_path="/usr/local/bin/gmsh", output_file="output.msh", dimension=3)
